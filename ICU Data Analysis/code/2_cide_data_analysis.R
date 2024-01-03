@@ -3,6 +3,9 @@
 ### Purpose: Data analysis with ICU data
 ###############################################################################
 
+source("ipsi_deriv.R")
+source("var_ipsi_deriv.R")
+
 #####################################
 ### Load and clean data
 
@@ -29,94 +32,65 @@ DELTAS <- c(DELTAS, 1, rev(1 / DELTAS))
 ### Calculate Average incremental 
 ### derivative effect IF values
 
-FOLDS <- 2
-icu$fold <- sample(1:FOLDS, size = nrow(icu), replace = T)
-output <- data.frame()
+results <- ipsi_deriv(y = icu$dead28,
+                      a = icu$icu_bed,
+                      id = icu$id,
+                      x.trt = icu %>% select(-id, -dead28, -icu_bed),
+                      x.out = icu %>% select(-id, -dead28, -icu_bed),
+                      fit = "rf",
+                      delta.seq = DELTAS,
+                      nsplits = 2,
+                      return_ifvals = TRUE)
 
-for (FOLD in 1:FOLDS) {
-  test <- icu %>% filter(fold == FOLD)
-  train <- icu %>% filter(fold != FOLD)
-  
-  pimod <- ranger(icu_bed ~ ., dat = train %>% select(-id, -dead28, -fold))
-  mumod <- ranger(dead28 ~ ., dat = train %>% select(-id, -fold))
-  
-  test$pihat <- predict(pimod, data = test %>% select(-id, -dead28, -fold))$predictions
-  test$mu1hat <- predict(mumod, 
-                         data = test %>% select(-id, -fold) %>% mutate(icu_bed = 1))$predictions
-  test$mu0hat <- predict(mumod, 
-                         data = test %>% select(-id, -fold) %>% mutate(icu_bed = 0))$predictions
-
-  output %<>% bind_rows(test)
-}
-
-### Calculate IF values at each delta
-ifvals <- data.frame()
-for (DELTA in DELTAS) {
-  temp <- output %>% mutate(delta = DELTA)
-
-  temp %<>% mutate(
-    omega = pihat * (1 - pihat) / ((DELTA * pihat + 1 - pihat)^2),
-    tau = mu1hat - mu0hat,
-    eif_omega = (icu_bed - pihat) * (1 / (DELTA * pihat + 1 - pihat)^3 - (2 * DELTA * pihat) / (DELTA * pihat + 1 - pihat)^2),
-    eif_tau = (icu_bed / pihat) * (dead28 - mu1hat) + ((1 - icu_bed) / (1 - pihat)) * (dead28 - mu0hat),
-    plugin = omega * tau,
-    eif_terms = omega * eif_tau + eif_omega * tau,
-    ifval_cide = eif_terms + plugin,
-  )
-
-  temp$ifval_vcide_t2 <-  mean(temp$eif_terms + temp$plugin) * (temp$eif_terms + temp$plugin)
-
-  ifvals %<>% bind_rows(temp)
-}
-
+ifvals <- data.frame(ifval = as.vector(results$ifvals))
+ifvals$delta <- rep(DELTAS, each = nrow(icu))
+ifvals$icnarc_score <- rep(icu$icnarc_score, times = length(DELTAS))
 
 ##########################################
 ### Second stage regressions for CIDE
 
-temp <- data.frame()
 for (DELTA in unique(ifvals$delta)) {
   
-  for (FOLD in 1:max(ifvals$fold)) {
-    cat("\nDelta: ", DELTA)
-    dat <- ifvals %>% filter(delta == DELTA) %>% filter(fold == FOLD)
+  cat("\nDelta: ", DELTA)
     
-    # Second stage model with smoothing spline using mgcv package
-    mod <- gam(ifval_cide ~ s(icnarc_score), data = dat)
-    dat$pred <- predict(mod)
-    dat$upr <- dat$pred + 1.96 * predict(mod, se.fit = TRUE)$se.fit
-    dat$lwr <- dat$pred - 1.96 * predict(mod, se.fit = TRUE)$se.fit
-    
-    temp %<>% bind_rows(dat)
-  }
+  # Second stage model with smoothing spline using mgcv package
+  mod <- gam(ifval ~ s(icnarc_score), data = ifvals %>% filter(delta == DELTA))
+  
+  # Predicted value
+  ifvals$pred[ifvals$delta == DELTA] <- predict(mod)
+  
+  # Upper bound of pointwise 95% CI
+  ifvals$upr[ifvals$delta == DELTA] <- 
+    ifvals$pred[ifvals$delta == DELTA] + 1.96 * predict(mod, se.fit = TRUE)$se.fit
+  
+  # Lower bound of pointwise 95% CI
+  ifvals$lwr[ifvals$delta == DELTA] <- 
+    ifvals$pred[ifvals$delta == DELTA] - 1.96 * predict(mod, se.fit = TRUE)$se.fit
     
 }
 
-ifvals <- temp
-rm(temp)
-gc()
 
 ####################################
 ### Calculate V-CIDE across delta
 
-### Calculate IF values 
-ifvals %<>% mutate(
-  ifval_vcide_t1 = (pred * pred) + 2 * pred * (eif_terms + plugin - (pred * pred)),
-  ifval_vcide = ifval_vcide_t1 - ifval_vcide_t2
-)
+x.trt.colnames <- colnames(icu %>% select(-id, -dead28, -icu_bed))
+results <- var_ipsi_deriv(y = icu$dead28,
+                          a = icu$icu_bed,
+                          id = icu$id,
+                          x.trt = icu %>% select(-id, -dead28, -icu_bed),
+                          x.out = icu %>% select(-id, -dead28, -icu_bed),
+                          cond.vars = which(x.trt.colnames %in% "icnarc_score"),
+                          fit = "rf",
+                          delta.seq = DELTAS,
+                          nsplits = 2,
+                          return_ifvals = TRUE)
 
-vcide <- ifvals %>% group_by(delta) %>%
-  summarize(pt_est = mean(ifval_vcide),
-            sd_est = sd(ifval_vcide) / sqrt(n()),
-            ad_hoc = sqrt((var(ifval_vcide_t1) + var(ifval_vcide_t2)) / n())) %>%
-  ungroup() %>%
-  mutate(lower = pt_est - 1.96 * pmax(sd_est, ad_hoc),
-         upper = pt_est + 1.96 * pmax(sd_est, ad_hoc))
 
 ##############################
 ### Create plots
 
 ### CIDE
-p1 <- ifvals %>% filter(fold == 1, delta %in% c(0.2, 0.5, 1, 2, 5)) %>%
+p1 <- ifvals %>% filter(delta %in% c(0.2, 0.5, 1, 2, 5)) %>%
   ggplot(aes(x = icnarc_score, y = pred)) +
   geom_point() +
   geom_line() +
@@ -130,11 +104,11 @@ ggsave(plot = p1, filename = "../figures/cide.png",
        width = 8, height = 6)
 
 ### VCIDE
-p2 <- ggplot(data = vcide, 
-             aes(x = as.factor(round(delta, 2)), group = 1, y = pt_est)) +
+p2 <- ggplot(data = results$res %>% filter(increment > 0.2), 
+             aes(x = as.factor(round(increment, 2)), group = 1, y = est)) +
   geom_point() +
   geom_line() +
-  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2) +
+  geom_ribbon(aes(ymin = ci.ll, ymax = ci.ul), alpha = 0.2) +
   labs(x = "Delta", y = "Variance of the Conditional Incremental Derivative Effect Estimate") +
   theme_clean()
 
