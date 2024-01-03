@@ -6,19 +6,26 @@
 source("0_ipsi_updated.R") # An amended version of npcausal::ipsi() that outputs
 # estimated propensity scores and influence function values.
 
+### Column names from original analysis
+COLS <- c("site", "dead28", "age", "male", "sepsis_dx",
+          "periarrest", "weekend", "winter", "icnarc_score", "news_score",
+          "sofa_score", "icu_bed", "open_bin", "v_cc1", "v_cc2", "v_cc3", 
+          "v_cc4", "v_cc5", "v_cc_r1", "v_cc_r2", "v_cc_r3", "v_cc_r4", 
+          "v_cc_r5")  
+
 #####################################
 ### Load and clean data
 
 # icu <- read.csv("../data/icuData.csv") 
-### ^^^ This data is not publicly available.
-### There is a similar dataset available (same size, sampled with replacement)
-### in ivmodel::icu.data.
+### ^^^ The data used in the original analysis is not publicly available.
+### Below, we use a similar, publicly available dataset
+icu <- read.csv("../data/icu_pseudo_data.csv") 
 
-# Use row number as ID
-icu %<>% rename(id = X)
+# Select columns from original analysis
+icu %<>% select(all_of(COLS))
 
-# Outcome variable: dead28
-icu %<>% select(-dead7, -dead90) 
+# Create id column
+icu$id <- seq_len(nrow(icu))
 
 # Change variables to factors
 icu %<>% mutate_at(vars(site, male, sepsis_dx:winter, v_cc1:v_cc_r5), as.factor)

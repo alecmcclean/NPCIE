@@ -11,19 +11,15 @@ if (!require(pacman)) {
   library(pacman)
 }
 
-p_load(assertthat,
-       e1071,
+p_load(e1071,
        earth,
        gbm,
        GGally,
        ggplot2,
        ggthemes,
        glmnet,
-       latex2exp,
-       lubridate,
        magrittr,
        mgcv,
-       modelr,
        nnet,
        np,
        pander,
@@ -31,7 +27,6 @@ p_load(assertthat,
        ranger,
        rpart,
        sandwich,
-       stargazer,
        SuperLearner,
        tidyverse,
        xgboost)
