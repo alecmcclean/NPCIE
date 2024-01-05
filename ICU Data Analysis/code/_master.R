@@ -3,7 +3,7 @@
 ### Purpose: Master script for conditional incremental effects analysis.  
 ### Loads packages and calls other scripts.
 ###
-### Last run: 2024-01-03
+### Last run: 2024-01-04
 ###############################################################################
 
 if (!require(pacman)) {
@@ -32,6 +32,7 @@ p_load(e1071,
        xgboost)
 
 options(stringsAsFactors = F)
+set.seed(20240104)
 
 source("1_icu_data_analysis.R")
 source("2_cide_data_analysis.R")

@@ -14,7 +14,8 @@ source("0_ipsi_updated.R") # An amended version of npcausal::ipsi() that outputs
 icu <- read.csv("../data/icu_pseudo_data.csv")
 
 # Create id variable, remove unused outcome variables (7- and 90-day mortality)
-icu %<>% rename(id = X) %>% select(-dead7, -dead90)
+icu %<>% mutate(id = seq_len(nrow(icu))) %>% select(-X, -dead7, -dead90)
+
 
 # Change variables to factors
 icu %<>% mutate_at(vars(site, male, sepsis_dx:winter, v_cc1:v_cc_r5), as.factor)
@@ -42,7 +43,7 @@ results <- ipsi_update(y = icu$dead28,
 ifvals <- as.data.frame(results$ifvals)
 colnames(ifvals) <- DELTAS
 ifvals$id <- icu$id 
-ifvals %<>% left_join(icu %>% select(id, age, icnarc_score, news_score, sofa_score))
+ifvals %<>% left_join(icu %>% select(id, icnarc_score))
 ifvals$split <- results$splits
 
 ifvals %<>% 
@@ -124,7 +125,7 @@ p3 <- ifvals %>%
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
 
 
-ggsave(plot = p3, filename = "../figures/smiles.png",
+ggsave(plot = p3, filename = "../figures/select_results_icnarc.png",
        width = 6, height = (10/3))
 
 
